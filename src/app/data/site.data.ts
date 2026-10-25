@@ -359,3 +359,37 @@ export const PHONE_SECONDARY_LABEL = '+91 95522 75167';
 export const EMAIL = 'info@themagicbottle.co.in';
 export const WHATSAPP = 'https://wa.me/917774814531?text=Hi%20The%20Magic%20Bottle%2C%20I%20want%20the%20franchise%20details.';
 export const ADDRESS = ['TMB Venture India LLP', 'C-202, Green Florencia', 'Sr. No. 292/1/1, Sus Gaon', 'Pune 411021'];
+
+export interface Outlet {
+  id: string;
+  n: number;
+  area: string;
+  address: string;
+  hq?: boolean;
+  lat: number;
+  lng: number;
+  maps: string;
+}
+
+function outlet(id: string, n: number, area: string, address: string, lat: number, lng: number, hq = false): Outlet {
+  return {
+    id,
+    n,
+    area,
+    address,
+    hq,
+    lat,
+    lng,
+    maps: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`,
+  };
+}
+
+export const OUTLETS: Outlet[] = [
+  outlet('hq', 1, 'Sus · Head office', '1st Floor, Belle Vue, Sus-Pashan Rd, Raavi Nagar, Sus, Pune, Maharashtra 411021', 18.52198, 73.76467, true),
+  outlet('balewadi', 2, 'Balewadi', 'Shop No. 02, Ground Floor, The Fountainhead, Baner-Balewadi Rd, Balewadi Phata, Baner, Pune', 18.56939, 73.7813),
+  outlet('kothrud', 3, 'Kothrud', 'Anant Manohar Apartment Shops, Paud Road, Aamchi Colony, Left Bhusari Colony, Kothrud, Pune', 18.50652, 73.79525),
+  outlet('wanwadi', 4, 'Wanwadi', 'Shop No. 07, Dev Leela Apartments, Fatima Nagar, Wanwadi, Pune', 18.48805, 73.89371),
+  outlet('vadgaon', 5, 'Vadgaon Budruk', 'Shop No. 02, Sanjivani Kunj, Dangat Patil Nagar, Kudale Baug, Vadgaon Budruk, Pune', 18.4675, 73.82537),
+  outlet('katraj', 6, 'Katraj', 'Pathare House, Katraj-Kondhwa Rd, Balkawade Nagar Society, Katraj, Pune', 18.44778, 73.8595),
+  outlet('ravet', 7, 'Ravet', 'Ravet, Pimpri-Chinchwad, Pune', 18.64327, 73.74506),
+];

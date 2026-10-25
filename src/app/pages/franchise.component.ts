@@ -1,6 +1,8 @@
-import { Component, signal } from '@angular/core';
+import { afterNextRender, Component, DestroyRef, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { BROCHURE_PAGES, BROCHURE_PDF, EMAIL, FAQS, MODELS, STEPS, SUPPORT, WHATSAPP } from '../data/site.data';
+import * as L from 'leaflet';
+import { MAHARASHTRA } from '../data/maharashtra';
+import { BROCHURE_PAGES, BROCHURE_PDF, EMAIL, FAQS, MODELS, OUTLETS, Outlet, STEPS, SUPPORT, WHATSAPP } from '../data/site.data';
 import { IconComponent } from '../icon.component';
 import { CalculatorComponent } from './calculator.component';
 
@@ -60,7 +62,8 @@ import { CalculatorComponent } from './calculator.component';
               <img [src]="model.image" [alt]="model.name + ' model'" />
               <div class="model-badge">
                 <span>Starts at</span>
-                <strong>{{ model.investmentLabel }}</strong>
+                <strong>{{ model.investmentLabel.split(' ')[0] }}</strong>
+                <em>lakh</em>
               </div>
             </div>
             <div class="model-facts">
@@ -170,6 +173,41 @@ import { CalculatorComponent } from './calculator.component';
       </div>
     </section>
 
+    <section class="band band-paper" id="location">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Where it is</p>
+          <h2>Headquarters and the Pune counters.</h2>
+        </div>
+        <div class="outlet-layout">
+          <ol class="outlet-list">
+            @for (spot of outlets; track spot.id) {
+              <li [class.on]="activeOutlet() === spot.id">
+                <button type="button" (click)="chooseOutlet(spot.id)">
+                  <small><b>{{ spot.n }}</b> {{ spot.hq ? 'Head office' : 'Outlet' }}</small>
+                  <strong>{{ spot.area }}</strong>
+                  <span>{{ spot.address }}</span>
+                </button>
+                @if (activeOutlet() === spot.id) {
+                  <a class="text-link" [href]="spot.maps" target="_blank" rel="noopener">Directions</a>
+                }
+              </li>
+            }
+          </ol>
+          <div class="map-shell mh-map">
+            <div class="state-pane">
+              <p class="map-kicker">Maharashtra</p>
+              <div #stateMap class="state-map" role="application" aria-label="Map of Maharashtra"></div>
+            </div>
+            <div class="pune-lens">
+              <p class="map-kicker">Pune <span>7 counters</span></p>
+              <div #cityMap class="lens-map" role="application" aria-label="The Magic Bottle outlets in Pune"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="closer closer-short">
       <img src="brand/model-classic.png" alt="" />
       <div class="wrap">
@@ -213,7 +251,17 @@ export class FranchiseComponent {
   readonly support = SUPPORT;
   readonly whatsapp = WHATSAPP;
   readonly email = EMAIL;
+  readonly outlets = OUTLETS;
+  readonly activeOutlet = signal('hq');
   readonly sheet = signal(0);
+  private readonly stateMap = viewChild<ElementRef<HTMLDivElement>>('stateMap');
+  private readonly cityMap = viewChild<ElementRef<HTMLDivElement>>('cityMap');
+  private readonly destroyRef = inject(DestroyRef);
+  private state?: L.Map;
+  private city?: L.Map;
+  private stateBounds?: L.LatLngBounds;
+  private citySpots?: L.LatLngBoundsExpression;
+  private readonly markers = new Map<string, L.Marker>();
   readonly stepIcons = ['chat', 'list', 'pin', 'spark', 'door'];
   readonly bring = [
     { icon: 'check', title: 'The same standard', copy: 'Food that tastes the same on a Tuesday as on a Saturday.' },
@@ -222,6 +270,14 @@ export class FranchiseComponent {
     { icon: 'users', title: 'People on the floor', copy: 'Two or three who will actually work the counter. FOFO means you run it.' },
   ];
   readonly openFaq = signal(0);
+
+  constructor() {
+    afterNextRender(() => this.mountMap());
+    this.destroyRef.onDestroy(() => {
+      this.state?.remove();
+      this.city?.remove();
+    });
+  }
 
   toggle(index: number): void {
     this.openFaq.update((current) => current === index ? -1 : index);
@@ -234,5 +290,200 @@ export class FranchiseComponent {
 
   stepSheet(delta: number): void {
     this.sheet.update((current) => Math.min(this.brochurePages.length - 1, Math.max(0, current + delta)));
+  }
+
+  chooseOutlet(id: string): void {
+    this.activeOutlet.set(id);
+    this.paintPins();
+    const marker = this.markers.get(id);
+    if (!this.city || !marker) {
+      return;
+    }
+    this.city.panTo(marker.getLatLng(), { animate: true, duration: 0.45 });
+    marker.openPopup();
+  }
+
+  private mountMap(): void {
+    if (this.state || this.city) {
+      return;
+    }
+    this.mountState();
+    this.mountCity();
+    const refit = () => {
+      for (const host of [this.stateMap()?.nativeElement, this.cityMap()?.nativeElement]) {
+        if (!host) {
+          continue;
+        }
+        host.style.height = '';
+        host.style.width = '';
+      }
+      this.state?.invalidateSize();
+      this.city?.invalidateSize();
+      if (this.state && this.stateBounds) {
+        this.state.fitBounds(this.stateBounds, { padding: [40, 36] });
+      }
+      if (this.city && this.citySpots) {
+        this.city.fitBounds(this.citySpots, { padding: [36, 48] });
+      }
+    };
+    window.setTimeout(refit, 80);
+    const onResize = () => {
+      this.state?.invalidateSize();
+      this.city?.invalidateSize();
+    };
+    window.addEventListener('resize', onResize);
+    this.destroyRef.onDestroy(() => window.removeEventListener('resize', onResize));
+  }
+
+  private ensureBox(host: HTMLElement, fallback: number): void {
+    if (host.clientHeight > 20 && host.clientWidth > 20) {
+      return;
+    }
+    host.style.height = `${fallback}px`;
+    host.style.width = '100%';
+  }
+
+  private mountState(): void {
+    const host = this.stateMap()?.nativeElement;
+    if (!host) {
+      return;
+    }
+    this.ensureBox(host, 420);
+    const map = L.map(host, {
+      zoomControl: false,
+      scrollWheelZoom: false,
+      attributionControl: true,
+      center: [19.4, 76.6],
+      zoom: 6,
+    });
+    map.attributionControl.setPrefix('');
+    map.attributionControl.addAttribution('© OpenStreetMap');
+    const shape = {
+      type: 'Feature' as const,
+      properties: {},
+      geometry: { type: 'Polygon' as const, coordinates: [MAHARASHTRA] },
+    };
+    L.geoJSON(shape, {
+      style: { color: '#ffd000', weight: 7, opacity: 0.28, fill: false },
+    }).addTo(map);
+    const land = L.geoJSON(shape, {
+      style: { color: '#e8ebf0', weight: 1.4, fillColor: '#3c4450', fillOpacity: 1 },
+    }).addTo(map);
+    const places = [
+      { name: 'Mumbai', lat: 19.076, lng: 72.878 },
+      { name: 'Nashik', lat: 19.997, lng: 73.789 },
+      { name: 'Nagpur', lat: 21.146, lng: 79.088 },
+    ];
+    for (const place of places) {
+      L.marker([place.lat, place.lng], {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+          className: 'mh-place',
+          html: place.name,
+          iconSize: [72, 16],
+          iconAnchor: place.name === 'Mumbai' ? [78, 22] : [36, 8],
+        }),
+      }).addTo(map);
+    }
+    const pune = this.outlets.reduce(
+      (sum, spot) => [sum[0] + spot.lat / this.outlets.length, sum[1] + spot.lng / this.outlets.length] as L.LatLngTuple,
+      [0, 0] as L.LatLngTuple,
+    );
+    L.circleMarker(pune, {
+      radius: 7,
+      color: '#1c2430',
+      weight: 2,
+      fillColor: '#ffd000',
+      fillOpacity: 1,
+      interactive: false,
+    }).addTo(map);
+    L.marker(pune, {
+      interactive: false,
+      icon: L.divIcon({
+        className: 'mh-pune',
+        html: 'Pune',
+        iconSize: [48, 16],
+        iconAnchor: [-8, 28],
+      }),
+    }).addTo(map);
+    this.stateBounds = land.getBounds();
+    map.fitBounds(this.stateBounds, { padding: [40, 36] });
+    this.state = map;
+  }
+
+  private mountCity(): void {
+    const host = this.cityMap()?.nativeElement;
+    if (!host) {
+      return;
+    }
+    this.ensureBox(host, 320);
+    const map = L.map(host, {
+      zoomControl: false,
+      scrollWheelZoom: false,
+      attributionControl: false,
+      center: [18.52, 73.82],
+      zoom: 11,
+    });
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    const spots = this.outlets.map((spot) => [spot.lat, spot.lng] as L.LatLngTuple);
+    const center = spots.reduce(
+      (sum, spot) => [sum[0] + spot[0] / spots.length, sum[1] + spot[1] / spots.length] as L.LatLngTuple,
+      [0, 0] as L.LatLngTuple,
+    );
+    L.circle(center, {
+      radius: 18000,
+      color: '#ffd000',
+      weight: 1,
+      opacity: 0.45,
+      fillColor: '#ffd000',
+      fillOpacity: 0.05,
+    }).addTo(map);
+    for (const spot of this.outlets) {
+      const marker = L.marker([spot.lat, spot.lng], { icon: this.iconFor(spot, false) });
+      marker.bindPopup(
+        `<strong>${spot.area}</strong><span>${spot.address}</span>`,
+        { className: 'mb-popup', closeButton: false, offset: [0, -8] },
+      );
+      const side = spot.id === 'hq' || spot.id === 'balewadi' || spot.id === 'vadgaon' ? 'left' : 'right';
+      marker.bindTooltip(this.shortName(spot), {
+        permanent: true,
+        direction: side,
+        offset: side === 'left' ? [-8, -16] : [8, -16],
+        className: 'pin-name',
+        opacity: 1,
+      });
+      marker.on('click', () => this.chooseOutlet(spot.id));
+      marker.addTo(map);
+      this.markers.set(spot.id, marker);
+    }
+    this.citySpots = spots;
+    map.fitBounds(spots, { padding: [36, 48] });
+    this.city = map;
+    this.paintPins();
+  }
+
+  private shortName(spot: Outlet): string {
+    if (spot.hq) {
+      return 'Sus';
+    }
+    return spot.area.startsWith('Vadgaon') ? 'Vadgaon' : spot.area;
+  }
+
+  private paintPins(): void {
+    for (const spot of this.outlets) {
+      this.markers.get(spot.id)?.setIcon(this.iconFor(spot, spot.id === this.activeOutlet()));
+    }
+  }
+
+  private iconFor(spot: Outlet, selected: boolean): L.DivIcon {
+    const fill = selected ? '#ffd000' : '#ffffff';
+    return L.divIcon({
+      className: 'mb-pin-wrap',
+      iconSize: [34, 44],
+      iconAnchor: [17, 42],
+      popupAnchor: [0, -38],
+      html: `<svg width="34" height="44" viewBox="0 0 34 44" aria-hidden="true"><path d="M17 42.2C17 42.2 2.2 26.2 2.2 16.2a14.8 14.8 0 1 1 29.6 0C31.8 26.2 17 42.2 17 42.2z" fill="${fill}" stroke="#1c2430" stroke-width="1.6"/><text x="17" y="21" text-anchor="middle" font-family="Manrope,sans-serif" font-size="13" font-weight="800" fill="#1c2430">${spot.n}</text></svg>`,
+    });
   }
 }
